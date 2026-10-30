@@ -80,11 +80,12 @@ Uma linha por decisão registrada acima (usem os títulos ditados em aula):
 
 | # | Decisão | Nossa letra | Consequência que ELA teria tido |
 |---|---|---|---|
-| | | | |
-| | | | |
-| | | | |
-
-*(adicionem linhas conforme as decisões da madrugada)*
+| 1 | Corrigir + escrever o teste (assertThrows) antes de subir | C | Demora 40 min a mais (8 clientes afetados no total), mas sobe com o assertThrows protegendo a invariante: a suíte ganha um teste honesto.  |
+| 2 | Usar a derived query findByTitular (Spring Data JPA) | D | O caminho de arquitetura: usa a abstração certa (o repository já tinha a query pronta). Demora ~50 min, mais que A |
+| 3 |  Tirar o endpoint de busca do ar | B | Busca fora do ar durante a BF: clientes não encontram as próprias contas, SAC explode. Injeção morta por ausência |
+| 4 | Corrigir + reprocessar os extratos antigos | B | Corrige a gravação E reprocessa o histórico (~2h): os comprovantes já emitidos voltam certos; integridade total |
+| 5 | Fail-fast: exceção clara na factory (tipo inválido) | A | A factory rejeita na hora com "Tipo de conta inválido: UNIVERSITARIA": o erro nasce e morre no mesmo lugar (~30 min) |
+| 6 | Investigar agora e perder a janela de deploy | B | Perde a janela: as correções da noite só entram depois da abertura. MAS a investigação revela a verdade: o código é que está errado, o contrato diz R$ 5 |
 
 ---
 
@@ -94,32 +95,32 @@ Uma linha por decisão registrada acima (usem os títulos ditados em aula):
 
 ## 1. Linha do tempo da madrugada
 
-_______________________________________________________________________________________
-
-_______________________________________________________________________________________
-
-_______________________________________________________________________________________
+- 19h12 — Rodada 1: a API aceita transferências mesmo sem saldo; três clientes aparecem no vermelho e o contrato do banco quebra na primeira hora.
+- 20h10 — evento relâmpago A: a busca por titular usa comparação por referência e volta vazia para nomes iguais, mesmo quando a conta existe.
+- 21h02 — Rodada 2: tentativa de SQL injection via `OR '1'='1'`, confirmando que a query estava montada com concatenação e sem parâmetros.
+- 22h40 — evento relâmpago B: o sistema deixa conexões JDBC abertas sem liberar e a base começa a degradar sob carga.
+- 22h50 — Rodada 3: contas "gêmeas" são criadas com número duplicado, quebrando a promessa de sequência única e comprometendo a auditoria.
+- 00h47 — Rodada 4: o extrato grava pagador e recebedor trocados, embora os saldos estejam corretos; o comprovante vira um erro de integridade de dados.
+- 01h30 — Rodada 5: a `ContaFactory` retorna `null` para tipos desconhecidos e a exceção explode longe da causa real, sem mensagem útil para o cliente.
+- 02h20 — evento relâmpago C: o cadastro aceita objetos incompletos, criando estados inválidos que só explodem mais tarde.
+- 03h20 — evento relâmpago D: o teste passa sem `assert`, dando uma falsa sensação de segurança e mascarando regressões na suíte.
+- 05h00 — go/no-go: a equipe precisa decidir se a janela de deploy vale a correção ou se a causa raiz deve ser resolvida antes de seguir.
 
 ## 2. Causa raiz de 2 incidentes (aula + mecanismo técnico)
 
-**Incidente 1:** _______________________________________________
+**Incidente 1:** Transferências sem saldo aceitas e extrato com dados invertidos
 
-Aula/mecanismo:
+Aula/mecanismo: Aula 13/14 — a invariante de negócio foi contornada no serviço; a exceção de saldo insuficiente era capturada e o fluxo continuava, e o extrato foi gravado com origem/destino trocados. O trade-off foi “correr para publicar” em vez de preservar a regra de negócio e a integridade do histórico.
 
-_______________________________________________________________________________________
+**Incidente 2:** Busca vulnerável e acesso ao banco sem controle de conexão
 
-**Incidente 2:** _______________________________________________
-
-Aula/mecanismo:
-
-_______________________________________________________________________________________
+Aula/mecanismo: Aula 11/12 — o código montava SQL com `Statement` + concatenação, comparava `String` com `==` e não liberava a conexão depois da consulta. O trade-off foi a velocidade de um hotfix funcional contra segurança, consistência e operação estável do banco.
 
 ## 3. O que faríamos diferente (2 rodadas + por quê)
 
-_______________________________________________________________________________________
-
-_______________________________________________________________________________________
+- Na Rodada 1, teríamos escolhido C e escrito o `assertThrows` antes de subir: a invariante “saldo nunca pode ficar negativo” é um contrato do negócio e precisa de teste para não voltar em produção.
+- Na Rodada 2, teríamos usado a camada correta do acesso a dados (`PreparedStatement`/`findByTitular` + `try-with-resources`) em vez de improvisar no endpoint: isso bloqueia injeção e aumenta a previsibilidade do banco sem sacrificar a operação.
 
 ## 4. A maior lição da equipe
 
-_______________________________________________________________________________________
+A maior lição foi que velocidade sem invariante vira dívida. Em produção, um código “que compila” e “que sobe” não vale nada se a regra do negócio, a segurança do banco e o teste de regressão forem ignorados — o problema não está só no bug, está no mecanismo que deixou a falha escapar.
